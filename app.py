@@ -1,36 +1,68 @@
-from vega_datasets import data
 import streamlit as st
-import altair as alt
+from PIL import Image, ImageEnhance
+import numpy as np
+import cv2
+import os
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+from tensorflow.keras.preprocessing.image import img_to_array
+from tensorflow.keras.models import load_model
+from detect_image import mask_image
+from detect import *
 
-def main():
-    df = load_data()
-    page = st.sidebar.selectbox("Choose a page", ["Homepage", "Exploration"])
 
-    if page == "Homepage":
-        st.header("This is your data explorer.")
-        st.write("Please select a page on the left.")
-        st.write(df)
-    elif page == "Exploration":
-        st.title("Data Exploration")
-        x_axis = st.selectbox("Choose a variable for the x-axis", df.columns, index=3)
-        y_axis = st.selectbox("Choose a variable for the y-axis", df.columns, index=4)
-        visualize_data(df, x_axis, y_axis)
+def detectOnWebcam():
+    """
+    Detect if people wear masks on the webcam video stream
+    :return:
+    """
+    frameST = st.empty()
+    print("* Start video stream...")
+    vs = VideoStream(src=0).start()
+    time.sleep(2.0)  # Warm up the video
 
-@st.cache
-def load_data():
-    df = data.cars()
-    return df
+    faceNet, maskNet = loadNetworks()
 
-def visualize_data(df, x_axis, y_axis):
-    graph = alt.Chart(df).mark_circle(size=60).encode(
-        x=x_axis,
-        y=y_axis,
-        color='Origin',
-        tooltip=['Name', 'Origin', 'Horsepower', 'Miles_per_Gallon']
-    ).interactive()
+    while True:
+        frame = vs.read()
+        frame = imutils.resize(frame, width=400)
 
-    st.write(graph)
+        locs, preds = predictMask(frame, faceNet, maskNet)
 
-if __name__ == "__main__":
-    main()
+        frame = maskImage(frame, locs, preds)
+        cv2.imshow('Mask Detection', frame)
 
+        key = cv2.waitKey(1) & 0xFF
+
+        if key == ord("q"):
+            break
+
+        frameST.image(frame, channels="BGR")
+
+    cv2.destroyAllWindows()
+    vs.stop()
+
+
+cv2.ocl.setUseOpenCL(False)
+
+st.title("Face Mask Detection")
+activities = ["Image", "Webcam"]
+st.set_option('deprecation.showfileUploaderEncoding', False)
+choice = st.sidebar.selectbox("The Input Format:", activities)
+
+if choice == "Image":
+    st.subheader("Mask Detection on Image")
+    image_file = st.file_uploader("Upload Image", type=['jpg'])
+    if image_file is not None:
+        img = Image.open(image_file)
+        img.save('./images/out.jpg')
+        st.image(image_file, use_column_width=True)
+        if st.button('Process'):
+            loading_img_path = Image.open('./asset/loading.gif')
+            loading_img = st.markdown("![Loading...](https://i.pinimg.com/originals/78/e8/26/78e826ca1b9351214dfdd5e47f7e2024.gif)")
+            new_image = mask_image("./images/out.jpg")
+            new_image = cv2.cvtColor(new_image, cv2.COLOR_BGR2RGB)
+            st.image(new_image, use_column_width=True)
+            loading_img.empty()
+
+if choice == "Webcam":
+    detectOnWebcam()
